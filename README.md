@@ -1,23 +1,59 @@
-# SLAM video trajectory viewer
+# Траектория камеры из видео
 
-Local CPU reconstruction of a camera trajectory from MP4, with a Vue viewer and a single-process FastAPI API. There is no database or queue; one API worker owns the processing slot.
+Локальное приложение: MP4 → CPU-реконструкция pycolmap → синхронные видео и маршрут во Vue. Один запуск одновременно, без очереди и базы данных. Результаты сохраняются в файлах.
 
-## Run locally
+## Запуск
 
-```sh
-UV_CACHE_DIR=/tmp/slam-uv-cache uv run --project backend uvicorn slam.api:app --host 127.0.0.1 --port 8000
-cd frontend && npm ci && npm run build && npm run preview -- --host 127.0.0.1 --port 4173
-```
+Проверено на Linux/WSL, Python 3.13 и Node 22.22. Нужны [uv](https://docs.astral.sh/uv/) и Node 22 LTS (от 22.12) либо Node 24+. Собственный C++ и CUDA не требуются.
 
-Open <http://127.0.0.1:4173>. Vite proxies `/api` to `http://127.0.0.1:8000`. Set `SLAM_STORAGE=/absolute/path` to choose the file-backed storage directory.
-
-Restarting the API cancels an active child process; completed manifests remain available. A second run while one is active returns `409 processing_busy`; a later run creates a new directory and does not overwrite old results. Processing is CPU-bound and runtime depends on video, settings, and the installed pycolmap build.
-
-## Verification
+В первом терминале из корня проекта:
 
 ```sh
-UV_CACHE_DIR=/tmp/slam-uv-cache uv run --project backend --extra test python -m pytest backend/tests -q
-cd frontend && npm test -- --run
+uv sync --project backend --locked
+uv run --project backend uvicorn slam.api:app --host 127.0.0.1 --port 8000
 ```
 
-Lifecycle tests use only the public API and the documented controlled processor seam. Browser tests live in `tests/e2e` and require a running production preview plus `E2E_FIXTURE=/path/to/tiny-h264.mp4`; they never replace the production reconstruction engine.
+Во втором терминале:
+
+```sh
+cd frontend
+npm ci
+npm run build
+npm run preview -- --host 127.0.0.1 --port 4173
+```
+
+Открыть **http://127.0.0.1:4173**. Для разработки вместо build/preview используйте `npm run dev`. Vite проксирует `/api` к localhost:8000. OpenAPI доступен на http://127.0.0.1:8000/docs.
+
+Выберите MP4, проверьте предпросмотр и нажмите «Восстановить маршрут». После обработки доступны выбор модели, 2D-проекции, 3D-вид с ориентацией камеры, переход по времени, покрытие и JSON/CSV. Сохранённые результаты открываются в нижней части панели.
+
+## Хранение и жизненный цикл
+
+По умолчанию всё находится в `storage/` в корне проекта: исходники в `videos/`, каждый запуск в отдельном каталоге `runs/` с настройками, логом, разреженной реконструкцией и manifest. `SLAM_STORAGE=/absolute/path` меняет хранилище. `SLAM_UPLOAD_LIMIT_BYTES` меняет лимит файла (по умолчанию 512 MiB). Входные видео и runtime-файлы исключены из Git.
+
+Запускайте **один API-процесс, без `--workers` и reload во время обработки**. Второй запуск получает `409 processing_busy`. Отмена ждёт остановки дочернего процесса; следующий запуск создаёт новый каталог. При штатном и аварийном завершении API дочерняя обработка прекращается. После рестарта готовые результаты доступны, текущий запуск начинается заново вручную. Незавершённые каталоги не выдаются как готовые результаты.
+
+Обработка может занимать минуты. На включённых в исследование роликах текущий профиль зарегистрировал 111/111 и 234/234 выбранных кадров. Это не подтверждение точности в метрах: у монокулярной реконструкции произвольный масштаб, оси не выровнены по гравитации, GPS отсутствует. Независимые модели не соединяются; на пропусках поза не подменяется ближайшей точкой. Восстанавливается движение камеры, включая движение руки.
+
+## Проверки
+
+Из корня:
+
+```sh
+uv sync --project backend --extra test --locked
+uv run --project backend --extra test python -m pytest backend/tests -q
+npm --prefix frontend test
+npm --prefix frontend run build
+```
+
+Детерминированный E2E сам создаёт короткий H.264, запускает изолированные API и production preview на портах 18000/14173. Только тестовый сервер подменяет внешний CV-процесс контролируемыми позами; production всегда использует pycolmap.
+
+```sh
+cd tests/e2e
+npm ci
+npx playwright install chromium
+npm test
+```
+
+На Linux браузеру также нужны системные зависимости Playwright. Если установлен рабочий Chromium, можно указать его: `PLAYWRIGHT_CHROMIUM_EXECUTABLE=/usr/bin/chromium-browser npm test`.
+
+[Спецификация](.scratch/video-trajectory/spec.md) · [Контракт API](docs/api-contract.md) · [Проверки и ограничения](docs/verification.md) · [Исследование](research-reviewed.md).

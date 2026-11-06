@@ -15,3 +15,7 @@ dist/
 .taste-skill/
 test-results/
 playwright-report/
+
+.serena/
+*.tsbuildinfo
+tests/e2e/.runtime/

@@ -89,3 +89,63 @@ def test_invalid_processor_command_returns_start_failed(tmp_path):
     response = client.post('/api/runs', json={'videoId': video_id})
     assert response.status_code == 500
     assert response.json()['error']['code'] == 'start_failed'
+
+
+def test_completed_results_survive_new_app_instance(tmp_path):
+    with TestClient(make_app(tmp_path, processor(tmp_path))) as client:
+        video_id = upload(client)
+        run_id = client.post('/api/runs', json={'videoId': video_id}).json()['runId']
+        wait_state(client, 'succeeded')
+    with TestClient(make_app(tmp_path)) as restarted:
+        assert restarted.get('/api/status').json()['state'] == 'idle'
+        assert restarted.get('/api/results').json()[0]['runId'] == run_id
+        assert restarted.get(f'/api/results/{run_id}').json()['videoId'] == video_id
+
+
+def test_real_worker_exits_after_api_is_killed(tmp_path):
+    """Observe process lifetime at the operating-system boundary, not controller internals."""
+    import os
+    import socket
+    import subprocess
+    import httpx
+    import pytest
+    if not Path('/proc/self/task').exists():
+        pytest.skip('Linux/WSL process lifetime check')
+    with socket.socket() as listener:
+        listener.bind(('127.0.0.1', 0))
+        port = listener.getsockname()[1]
+    environment = os.environ.copy()
+    environment['SLAM_STORAGE'] = str(tmp_path)
+    environment['PYTHONPATH'] = str(Path(__file__).resolve().parents[1])
+    api = subprocess.Popen([sys.executable, '-m', 'uvicorn', 'slam.api:app', '--host', '127.0.0.1', '--port', str(port)],
+                           env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    child = None
+    try:
+        for line in api.stderr:
+            if 'Uvicorn running' in line:
+                break
+        with httpx.Client(base_url=f'http://127.0.0.1:{port}', trust_env=False, timeout=5) as client:
+            video_id = upload(client)
+            assert client.post('/api/runs', json={'videoId':video_id}).status_code == 202
+        children = [pid for entry in Path(f'/proc/{api.pid}/task').glob('*/children') for pid in entry.read_text().split()]
+        assert children, 'API did not launch an external reconstruction process'
+        child = int(children[0])
+        api.kill()
+        api.wait(timeout=5)
+        deadline = time.monotonic()+10
+        while time.monotonic() < deadline:
+            stat = Path(f'/proc/{child}/stat')
+            if not stat.exists() or stat.read_text().split()[2] == 'Z':
+                break
+            time.sleep(.05)
+        else:
+            pytest.fail('Reconstruction survived loss of the API parent process')
+    finally:
+        if api.poll() is None:
+            api.kill()
+            api.wait(timeout=5)
+        if child and Path(f'/proc/{child}/stat').exists():
+            try:
+                os.kill(child, 9)
+            except ProcessLookupError:
+                pass
