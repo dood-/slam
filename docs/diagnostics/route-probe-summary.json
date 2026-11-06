@@ -1,0 +1,140 @@
+{
+  "fixed_reference_intrinsics": [
+    {
+      "id": "0",
+      "camera": {
+        "model": "SIMPLE_RADIAL",
+        "width": 640,
+        "height": 360,
+        "params": [
+          491.8255236781013,
+          320.0,
+          180.0,
+          0.019836029659899685
+        ]
+      },
+      "quality": {
+        "registeredFrames": 197,
+        "sampledFrames": 234,
+        "coverage": 0.8418803418803419,
+        "points3D": 17571,
+        "meanReprojectionErrorPx": 0.9130596627459854,
+        "maxGapSec": 7.385255555555553
+      }
+    },
+    {
+      "id": "1",
+      "camera": {
+        "model": "SIMPLE_RADIAL",
+        "width": 640,
+        "height": 360,
+        "params": [
+          491.8255236781013,
+          320.0,
+          180.0,
+          0.019836029659899685
+        ]
+      },
+      "quality": {
+        "registeredFrames": 29,
+        "sampledFrames": 234,
+        "coverage": 0.12393162393162394,
+        "points3D": 886,
+        "meanReprojectionErrorPx": 0.921529259731496,
+        "maxGapSec": 35.427077777777775
+      }
+    },
+    {
+      "id": "2",
+      "camera": {
+        "model": "SIMPLE_RADIAL",
+        "width": 640,
+        "height": 360,
+        "params": [
+          491.8255236781013,
+          320.0,
+          180.0,
+          0.019836029659899685
+        ]
+      },
+      "quality": {
+        "registeredFrames": 48,
+        "sampledFrames": 234,
+        "coverage": 0.20512820512820512,
+        "points3D": 1621,
+        "meanReprojectionErrorPx": 1.0548782950751971,
+        "maxGapSec": 37.231633333333335
+      }
+    }
+  ],
+  "window15": [
+    {
+      "id": "0",
+      "camera": {
+        "model": "SIMPLE_RADIAL",
+        "width": 640,
+        "height": 360,
+        "params": [
+          331.3936824230294,
+          320.0,
+          180.0,
+          0.029320796137694345
+        ]
+      },
+      "quality": {
+        "registeredFrames": 211,
+        "sampledFrames": 234,
+        "coverage": 0.9017094017094017,
+        "points3D": 18459,
+        "meanReprojectionErrorPx": 0.9088935591534677,
+        "maxGapSec": 4.578522222222219
+      }
+    },
+    {
+      "id": "1",
+      "camera": {
+        "model": "SIMPLE_RADIAL",
+        "width": 640,
+        "height": 360,
+        "params": [
+          302.45617254986183,
+          320.0,
+          180.0,
+          -0.004195569888349249
+        ]
+      },
+      "quality": {
+        "registeredFrames": 43,
+        "sampledFrames": 234,
+        "coverage": 0.18376068376068377,
+        "points3D": 1344,
+        "meanReprojectionErrorPx": 1.1295291763283966,
+        "maxGapSec": 38.00048888888889
+      }
+    }
+  ],
+  "prefix_only_time_limited": [
+    {
+      "id": "0",
+      "camera": {
+        "model": "SIMPLE_RADIAL",
+        "width": 640,
+        "height": 360,
+        "params": [
+          300.14504200927723,
+          320.0,
+          180.0,
+          0.037163449429079655
+        ]
+      },
+      "quality": {
+        "registeredFrames": 106,
+        "sampledFrames": 121,
+        "coverage": 0.8760330578512396,
+        "points3D": 13238,
+        "meanReprojectionErrorPx": 0.9450153804183467,
+        "maxGapSec": 2.2741000000000007
+      }
+    }
+  ]
+}
