@@ -1,0 +1,1 @@
+{"name":"slam-viewer","private":true,"version":"0.1.0","type":"module","scripts":{"dev":"vite","build":"tsc -b && vite build","test":"vitest run","preview":"vite preview"},"dependencies":{"@vitejs/plugin-vue":"latest","three":"^0.170.0","vite":"latest","vue":"^3.5.0"},"devDependencies":{"typescript":"~5.6.0","vitest":"latest","vue-tsc":"latest","jsdom":"latest"}}
