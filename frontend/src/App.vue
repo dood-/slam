@@ -14,10 +14,10 @@ const settings=ref({sampleHz:5,maxImageSize:640,maxFeatures:1500,threads:2,overl
 const source=computed(()=>trajectory.value?.video.previewUrl||localUrl.value||video.value?.previewUrl||'')
 const model=computed(()=>trajectory.value?.models.find(m=>m.id===modelId.value))
 const pose=computed(()=>model.value?poseAt(model.value.samples,time.value):null)
-const duration=ref(0)
+const duration=ref(0), localMeta=ref<{width:number;height:number;duration:number}|null>(null)
 const stateLabels:Record<string,string>={idle:'Готово к запуску',running:'Обработка',succeeded:'Восстановлено',partial:'Частичный результат',failed:'Ошибка обработки',cancelled:'Обработка отменена'}
 const stageLabels:Record<string,string>={decoding:'Подготовка кадров',features:'Поиск ключевых точек',matching:'Сопоставление кадров',mapping:'Восстановление геометрии',done:'Результат готов'}
-const poseLabel=computed(()=>pose.value?.status==='estimated'?'Измеренная поза':pose.value?'Интерполированная поза':'Поза недоступна')
+const poseLabel=computed(()=>pose.value?.status==='estimated'?'Оценённая поза':pose.value?'Интерполированная поза':'Поза недоступна')
 const timeline=computed(()=>model.value?.samples.map((sample,i,array)=>({start:sample.timeSec,end:array[i+1]?.timeSec||duration.value,valid:sample.status==='estimated'&&array[i+1]?.status==='estimated'&&sample.segmentId===array[i+1]?.segmentId}))||[])
 let poll:ReturnType<typeof setTimeout>|undefined, disposed=false, frameCallback:number|undefined, callbackVideo:HTMLVideoElement|null=null
 let loadedRun=''
@@ -42,7 +42,7 @@ async function refresh(){
 function choose(event:Event){
   const file=(event.target as HTMLInputElement).files?.[0];if(!file)return
   if(localUrl.value)URL.revokeObjectURL(localUrl.value)
-  selectedFile.value=file;localUrl.value=URL.createObjectURL(file);video.value=null;trajectory.value=null;time.value=0;error.value=''
+  localMeta.value=null;selectedFile.value=file;localUrl.value=URL.createObjectURL(file);video.value=null;trajectory.value=null;time.value=0;error.value=''
 }
 async function upload(){if(!selectedFile.value)return;video.value=await api.upload(selectedFile.value)}
 async function start(){
@@ -57,7 +57,7 @@ async function start(){
   pending.value=false
 }
 async function cancel(){if(status.value.runId)await perform(async()=>{status.value=await api.cancel(status.value.runId!);if(poll)clearTimeout(poll);await refresh()})}
-function sync(){if(media.value){time.value=media.value.currentTime;playing.value=!media.value.paused;duration.value=Number.isFinite(media.value.duration)?media.value.duration:0}}
+function sync(){if(media.value){time.value=media.value.currentTime;playing.value=!media.value.paused;duration.value=Number.isFinite(media.value.duration)?media.value.duration:0;localMeta.value={width:media.value.videoWidth,height:media.value.videoHeight,duration:duration.value}}}
 function seek(value:number){if(media.value){media.value.currentTime=value;time.value=value}}
 async function toggle(){await perform(async()=>{if(!media.value)return;if(media.value.paused)await media.value.play();else media.value.pause()})}
 function setRate(){if(media.value)media.value.playbackRate=speed.value}
@@ -82,6 +82,7 @@ function number(value:number|undefined){return value===undefined?'—':value.toL
       <div v-if="error" class="error-message" role="alert">{{error}}<button aria-label="Закрыть сообщение" @click="error=''">×</button></div>
       <section class="input-panel" aria-labelledby="source-title"><div class="source-controls"><h2 id="source-title">Исходное видео</h2><label class="file-picker"><span>{{selectedFile?.name||video?.name||'Выбрать MP4'}}</span><input aria-label="Выбрать MP4" type="file" accept="video/mp4,.mp4" :disabled="pending||status.state==='running'" @change="choose"></label><button class="primary" :disabled="(!selectedFile&&!video)||pending||status.state==='running'" @click="start">{{pending?'Подготовка…':'Восстановить маршрут'}}</button></div>
       <div v-if="video" class="metadata">{{video.width}} × {{video.height}} · {{video.durationSec.toFixed(2)}} с · {{number(video.frameCount)}} кадров · {{video.codec}}</div>
+      <div v-else-if="localMeta" class="metadata">{{localMeta.width}} × {{localMeta.height}} · {{localMeta.duration.toFixed(2)}} с · предпросмотр доступен</div>
       <details class="parameters"><summary>Параметры обработки</summary><div class="parameter-grid"><label>Выборка, кадров/с<input v-model.number="settings.sampleHz" type="number" min="0.5" max="30" step="0.5" :disabled="status.state==='running'"></label><label>Размер, px<input v-model.number="settings.maxImageSize" type="number" min="160" max="1920" :disabled="status.state==='running'"></label><label>Признаки на кадр<input v-model.number="settings.maxFeatures" type="number" min="256" max="8192" :disabled="status.state==='running'"></label><label>Потоки CPU<input v-model.number="settings.threads" type="number" min="1" max="16" :disabled="status.state==='running'"></label><label>Окно сопоставления<input v-model.number="settings.overlap" type="number" min="1" max="30" :disabled="status.state==='running'"></label></div></details></section>
       <section v-if="status.state==='running'" class="processing" aria-label="Ход обработки"><div><h2>{{stageLabels[status.stage]||status.stage}}</h2><p v-if="status.total">{{number(status.processed||0)}} / {{number(status.total)}} · счётчик текущего этапа</p><p v-else>Выполняются вычисления на CPU</p></div><span class="activity" aria-hidden="true"></span><button @click="cancel">Отменить обработку</button></section>
       <div class="workspace">

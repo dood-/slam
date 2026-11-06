@@ -109,6 +109,8 @@ class RunController:
         if not valid_id(run_id):
             raise FileNotFoundError
         result = json.loads((self.runs/run_id/'manifest.json').read_text())
+        if not isinstance(result, dict) or not isinstance(result.get('trajectory'), dict):
+            raise ValueError('Invalid result manifest')
         if result['state'] not in ('succeeded', 'partial') or not result['trajectory']['models']:
             raise FileNotFoundError
         return result
@@ -181,7 +183,7 @@ class RunController:
                     if process.returncode != 0:
                         raise ValueError('Process failed after publication')
                     self.current.update(state=manifest['state'], stage='done')
-                except (OSError, ValueError, KeyError):
+                except (OSError, ValueError, KeyError, TypeError):
                     (directory/'manifest.json').unlink(missing_ok=True)
                     self.current.update(state='failed', stage='failed', error=failure or {
                         'code':'processing_failed', 'message':'Обработка завершилась с ошибкой. Подробности в worker.log.'})
@@ -198,7 +200,7 @@ class RunController:
                 try:
                     old = self.completed(run_id)
                     return {'state':old['state'], 'runId':run_id, 'videoId':old['trajectory']['videoId'], 'stage':'done'}
-                except (OSError, ValueError, KeyError):
+                except (OSError, ValueError, KeyError, TypeError):
                     return error('not_found', 'Запуск не найден.', 404)
             if self.current['state'] != 'running':
                 return self.status()
@@ -315,7 +317,7 @@ def create_app(storage=None, processor_command=None, upload_limit_bytes=None):
                     'videoName':trajectory['video']['name'], 'createdAt':trajectory['createdAt'],
                     'state':manifest['state'], 'registeredFrames':primary['quality']['registeredFrames'],
                     'sampledFrames':primary['quality']['sampledFrames']})
-            except (OSError, ValueError, KeyError, StopIteration):
+            except (OSError, ValueError, KeyError, TypeError, StopIteration):
                 continue
         return sorted(records, key=lambda record:record['createdAt'], reverse=True)
 
@@ -323,14 +325,14 @@ def create_app(storage=None, processor_command=None, upload_limit_bytes=None):
     def result(run_id):
         try:
             return controller.completed(run_id)['trajectory']
-        except (OSError, ValueError, KeyError):
+        except (OSError, ValueError, KeyError, TypeError):
             return error('not_found', 'Готовый результат не найден.', 404)
 
     @app.get('/api/results/{run_id}/export')
     def export(run_id, format='json'):
         try:
             trajectory = controller.completed(run_id)['trajectory']
-        except (OSError, ValueError, KeyError):
+        except (OSError, ValueError, KeyError, TypeError):
             return error('not_found', 'Готовый результат не найден.', 404)
         headers = {'Content-Disposition':f'attachment; filename="{run_id}.{format}"'}
         if format == 'json':
