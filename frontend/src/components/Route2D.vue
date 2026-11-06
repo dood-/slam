@@ -5,6 +5,7 @@ import { contiguousSegments, poseAt, projection, type Plane } from '../trajector
 const props = defineProps<{ model: Model; time: number }>()
 const emit = defineEmits<{ seek: [time: number] }>()
 const plane = ref<Plane>('XZ')
+const axisLabels = computed(() => ({XY: 'X · Вертикаль: Y', XZ: 'X · Вертикаль: Z', YZ: 'Y · Вертикаль: Z'}[plane.value]))
 const box = ref([0, 0, 800, 450])
 const points = computed(() => projection(props.model, plane.value, 800, 450))
 const segments = computed(() => contiguousSegments(props.model.samples))
@@ -38,7 +39,7 @@ function dragMove(event: PointerEvent) {
 watch(() => props.model.id, fit)
 </script>
 <template>
-  <div class="route-toolbar"><label>Проекция <select v-model="plane" aria-label="Плоскость проекции"><option>XY</option><option>XZ</option><option>YZ</option></select></label><span>Оси модели · условные единицы</span></div>
+  <div class="route-toolbar"><label>Проекция <select v-model="plane" aria-label="Плоскость проекции"><option>XY</option><option>XZ</option><option>YZ</option></select></label><span>Горизонталь: {{axisLabels}}</span></div>
   <svg class="route-2d" :viewBox="box.join(' ')" role="img" aria-label="Траектория камеры в 2D" @pointerdown="dragStart" @pointermove="dragMove" @pointerup="drag=null" @pointercancel="drag=null">
     <path v-for="(segment,index) in segments" :key="index" :d="path(segment)" class="future-route" />
     <path v-for="(segment,index) in segments" :key="'past'+index" :d="path(segment.filter(s=>s.timeSec<=time))" class="past-route" />

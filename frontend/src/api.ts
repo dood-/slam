@@ -9,6 +9,7 @@ export interface Video {
     frameCount: number;
     codec: string;
     sha256: string;
+    sizeBytes?: number;
     previewUrl: string;
 }
 export interface Status {

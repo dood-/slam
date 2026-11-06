@@ -2,7 +2,7 @@
 
 Specification: `.scratch/video-trajectory/spec.md`. All JSON keys use camelCase. API base `/api`.
 
-- POST /videos multipart `file`: `{id,name,width,height,durationSec,frameCount,codec,sha256,previewUrl}` (Video). GET /videos/{id} same. GET /videos/{id}/preview supports HTTP Range.
+- POST /videos multipart `file`: `{id,name,width,height,durationSec,frameCount,codec,sha256,sizeBytes,previewUrl}` (Video). GET /videos/{id} same. `sizeBytes` is the uploaded file size in bytes; older stored metadata may omit it and is normalized on read. GET /videos/{id}/preview supports HTTP Range.
 - POST /runs JSON `{videoId,settings?:{sampleHz?:5,maxImageSize?:640,maxFeatures?:1500,threads?:2,overlap?:5}}` -> RunStatus, 202. 409 `{error:{code:'processing_busy',message:string}}` when occupied.
 - GET /status -> RunStatus: `{state:'idle'|'running'|'succeeded'|'partial'|'failed'|'cancelled',runId:string|null,videoId:string|null,stage:string,processed?:number,total?:number,error?:{code,message}|null}`.
 - POST /runs/{id}/cancel -> RunStatus, idempotent for same completed/cancelled run; cannot cancel a different running run.

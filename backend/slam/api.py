@@ -79,7 +79,8 @@ def read_video(path, video_id, name, digest):
         return {'id': video_id, 'name': name, 'width': stream.width,
                 'height': stream.height, 'durationSec': duration,
                 'frameCount': count, 'codec': stream.codec_context.name,
-                'sha256': digest, 'previewUrl': f'/api/videos/{video_id}/preview'}
+                'sha256': digest, 'sizeBytes': path.stat().st_size,
+                'previewUrl': f'/api/videos/{video_id}/preview'}
 
 
 class RunController:
@@ -103,7 +104,10 @@ class RunController:
     def metadata(self, video_id):
         if not valid_id(video_id):
             raise FileNotFoundError
-        return json.loads((self.videos/video_id/'metadata.json').read_text())
+        metadata = json.loads((self.videos/video_id/'metadata.json').read_text())
+        if 'sizeBytes' not in metadata:
+            metadata['sizeBytes'] = (self.videos/video_id/'video.mp4').stat().st_size
+        return metadata
 
     def completed(self, run_id):
         if not valid_id(run_id):
@@ -113,6 +117,12 @@ class RunController:
             raise ValueError('Invalid result manifest')
         if result['state'] not in ('succeeded', 'partial') or not result['trajectory']['models']:
             raise FileNotFoundError
+        video = result['trajectory'].get('video')
+        if isinstance(video, dict) and 'sizeBytes' not in video:
+            try:
+                video['sizeBytes'] = (self.videos/result['trajectory']['videoId']/'video.mp4').stat().st_size
+            except OSError:
+                pass
         return result
 
     def start(self, request):
