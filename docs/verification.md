@@ -1,17 +1,45 @@
-# Verification evidence
+# Проверка реализации
 
-This document records reproducible checks for the integration slice. It intentionally does not claim a check was run unless its command and result are recorded here.
+Проверено 2026-11-06 на Linux/WSL, Python 3.13, Node 22.22. Все команды выполнялись на интеграционной ветке. Исходные видео находятся только в локальном хранилище, без публикации.
 
-## Backend lifecycle
+## Автоматизированные проверки
 
-Command:
+- `backend/.venv/bin/python -m pytest backend/tests -q`: **9 passed**. Upload/Range/валидация параметров, первичная модель без двойного суммирования, CSV, аналитическое преобразование позы, busy/cancel/retry, ошибки процесса/старта, повторное открытие результатов и остановка реального дочернего процесса после SIGKILL API. Есть одно предупреждение Starlette об устаревшем HTTPX TestClient; тесты проходят.
+- `npm --prefix frontend test`: **5 passed**. API-контракт и независимые примеры интерполяции, SLERP, отсутствия поз через разрыв и сохранения пропорций проекции.
+- `npm --prefix frontend run build`: TypeScript/Vue typecheck и production build прошли. Bundler предупреждает о размере общего Three.js chunk (~584 kB, ~158 kB gzip); это не ошибка сборки.
+- Изолированный Playwright E2E: **1 passed, 6,8 с**. Загрузка H.264, запуск, результат, перемотка на паузе, пропуск и скрытие маркера, выбор временной точки и модели, два открытия 3D, JSON download/CSV, повторное открытие результата и ширина 390 px.
+
+E2E-команда в данном окружении:
 
 ```sh
-UV_CACHE_DIR=/tmp/slam-uv-cache uv run --project backend --extra test python -m pytest backend/tests/test_lifecycle.py -q
+PLAYWRIGHT_CHROMIUM_EXECUTABLE=/usr/bin/chromium-browser npm --prefix tests/e2e test
 ```
 
-Result: **3 passed** (one Starlette/httpx deprecation warning). Covered: busy concurrent start, cancellation, repeated cancellation, new start after cancellation, failed processor recovery, and process launch failure.
+Тестовый сервер сам генерирует ролик и использует контролируемый внешний CV-процесс. Это тест приложения, а не точности COLMAP. Рабочая обработка ниже отдельно прошла через настоящий pycolmap. Браузерные Linux-библиотеки у скачанного Playwright Chromium в окружении отсутствовали, поэтому использован уже установленный Chromium; production API для тестов не подменялся.
 
-## Browser E2E
+## Настоящие MP4 через публичный API
 
-The deterministic Playwright suite is in `tests/e2e`. Run it against a production Vite preview and a controlled backend with `E2E_FIXTURE` set to a tiny H.264 MP4. No browser run was performed by this integration agent; shared browser verification and screenshots are maintained by the integration lead.
+Загрузка, POST запуска, отказ второго запуска HTTP 409, ожидание результата, JSON/CSV и HTTP Range проверены без подмены движка. Профиль: CPU, 5 кадров/с, длинная сторона 640 px, SIFT 1500, overlap 5, 2 потока.
+
+| Видео | Основная модель | Время extraction/matching/mapping и ожидания API | Репроекция |
+|---|---|---|---|
+| 15-56-39 | 111 / 111 выбранных кадров, 26 900 точек; 2 альтернативные модели всего | 57,85 с | 0,259 px |
+| 17-00-18 | 234 / 234 выбранных кадров, 18 272 точки; одна модель | 135,28 с | 0,900 px |
+
+Полные численные результаты — [application-smoke.json](research-assets/application-smoke.json). Время не включает upload/decode-валидацию и не является SLA. Отличие от более раннего исследования (211/234 на новом ролике) допустимо: сборка native-зависимостей, подготовка кадров и численная вариативность влияют на результат. Покрытие не доказывает метрическую точность; ground truth не предоставлен.
+
+## Реальный браузер
+
+На production preview вручную проверены оба исходных H.264, воспроизведение/пауза, скорость 2×, перемотка на 10 и 30 секунд, поза по времени, альтернативная модель с пропусками, скрытие маркера, 2D/3D/2D/3D и fit. Видео загружается с HTTP 206. Проверенные API-запросы успешны, ошибок консоли нет.
+
+Визуально просмотрены desktop 1440, tablet 768 и mobile 390 px, включая результат с видео и реальной 3D-траекторией. На узких экранах горизонтального переполнения нет. Артефакты: [desktop](screenshots/desktop.png), [tablet](screenshots/tablet.png), [mobile](screenshots/mobile.png).
+
+Инспектор app-screen на production-сборке: **0 FAIL, 0 WARN** для 1440/768/390 после исправления мобильных отступов. Source lint: 0 FAIL; одно замечание о нескольких тире в поясняющем тексте, оставлены как русская пунктуация.
+
+## Code review
+
+Фиксированная точка — исходный коммит спецификации `feed7ea`; рассмотрены изменения на интеграционной ветке. Standards-axis: конкретных подтверждённых замечаний не найдено. Spec-axis: найдены P2 — подписи осей 2D и сохранение размера видео; оба исправлены в merge-коммите `6b07acf`. Повторно прошли 9 backend-тестов, 5 frontend-тестов и E2E с проверкой смены подписей осей.
+
+## Ограничения доказательств
+
+Нет эталонной траектории и оценки ATE/RPE в метрах. Не проверялись иные ОС, live-поток и GPU. Сохранённые результаты показывают относительную траекторию камеры в произвольном масштабе, без гравитации/геопривязки. Перезапуск прерванной обработки выполняется вручную.
