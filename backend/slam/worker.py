@@ -1,31 +1,179 @@
+"""CPU reconstruction child process; no application server or queue in this module."""
 from __future__ import annotations
-import hashlib,json,sys
-from datetime import datetime,timezone
-from pathlib import Path
-import av,cv2,numpy as np,pycolmap
 
-def main(video,out,settings):
-    out=Path(out); out.mkdir(parents=True,exist_ok=True); s=json.loads(settings); video_id=s.pop('_videoId',''); preview=s.pop('_previewUrl',''); imgs=out/'images'; imgs.mkdir()
-    c=av.open(video); stream=next(x for x in c.streams if x.type=='video'); times=[]; target=0.; step=1/max(float(s.get('sampleHz',5)),.01)
-    for frame in c.decode(stream):
-        t=float(frame.pts*frame.time_base) if frame.pts is not None else float(frame.time or 0)
-        if t+1e-8<target: continue
-        arr=frame.to_ndarray(format='gray'); h,w=arr.shape; maxw=int(s.get('maxImageSize',640))
-        if w>maxw: arr=cv2.resize(arr,(maxw,round(h*maxw/w)))
-        cv2.imwrite(str(imgs/f'{len(times):05}.jpg'),arr); times.append(t); target+=step
-    ex=pycolmap.FeatureExtractionOptions(); ex.num_threads=int(s.get('threads',2)); ex.sift.max_num_features=int(s.get('maxFeatures',1500)); ex.max_image_size=int(s.get('maxImageSize',640)); db=out/'database.db'
-    pycolmap.extract_features(db,imgs,camera_mode=pycolmap.CameraMode.SINGLE,reader_options={'camera_model':'SIMPLE_RADIAL'},extraction_options=ex,device=pycolmap.Device.cpu)
-    ma=pycolmap.FeatureMatchingOptions(); ma.num_threads=int(s.get('threads',2)); pycolmap.match_sequential(db,matching_options=ma,pairing_options={'overlap':int(s.get('overlap',5)),'quadratic_overlap':False,'num_threads':int(s.get('threads',2))},device=pycolmap.Device.cpu)
-    opts=pycolmap.IncrementalPipelineOptions(); opts.num_threads=int(s.get('threads',2)); models=pycolmap.incremental_mapping(db,imgs,out/'sparse',options=opts) or {}; all_models=[]
-    for mid,rec in models.items():
-        reg={Path(rec.image(i).name).stem:rec.image(i) for i in rec.reg_image_ids()}; samples=[]; segments=[]; seg=None; start=last=None
-        for i,t in enumerate(times):
-            im=reg.get(f'{i:05}')
-            if im is None: samples.append({'frameId':i,'timeSec':t,'status':'missing','position':None,'orientationXyzw':None,'segmentId':None}); seg=None; continue
-            pose=im.cam_from_world(); R=np.asarray(pose.rotation.matrix()); tv=np.asarray(pose.translation); q=pose.rotation.quat.tolist(); pos=(-R.T@tv).tolist()
-            if seg is None: seg=f'{mid}-{len(segments)}'; start=t
-            samples.append({'frameId':i,'timeSec':t,'status':'estimated','position':pos,'orientationXyzw':[q[1],q[2],q[3],q[0]],'segmentId':seg}); last=t
-            if i+1==len(times) or f'{i+1:05}' not in reg: segments.append({'id':seg,'startTimeSec':start,'endTimeSec':last})
-        cam=rec.camera(rec.image(next(iter(rec.reg_image_ids()))).camera_id); all_models.append({'id':str(mid),'camera':{'model':cam.model_name,'width':cam.width,'height':cam.height,'params':cam.params.tolist()},'samples':samples,'segments':segments,'quality':{'registeredFrames':rec.num_reg_images(),'sampledFrames':len(times),'coverage':rec.num_reg_images()/len(times) if times else 0,'points3D':rec.num_points3D(),'meanReprojectionErrorPx':rec.compute_mean_reprojection_error(),'maxGapSec':0}})
-    state='succeeded' if all_models and all(m['quality']['registeredFrames']==len(times) for m in all_models) else ('partial' if all_models else 'failed'); meta={'id':video_id,'name':Path(video).name,'width':w,'height':h,'durationSec':times[-1] if times else 0,'frameCount':len(times),'codec':stream.codec_context.name,'sha256':hashlib.sha256(Path(video).read_bytes()).hexdigest(),'previewUrl':preview}; now=datetime.now(timezone.utc).isoformat(); traj={'schemaVersion':1,'runId':out.name,'videoId':video_id,'video':meta,'createdAt':now,'engine':'pycolmap 4.2.1','units':'arbitrary','scaleSource':None,'poseConvention':'camera-to-world','settings':s,'primaryModelId':max(all_models,key=lambda m:m['quality']['coverage'])['id'] if all_models else '','models':all_models,'warnings':[] if state=='succeeded' else ['Some selected frames have no registered camera pose']}; (out/'manifest.json.tmp').write_text(json.dumps({'runId':out.name,'videoId':video_id,'state':state,'createdAt':now,'trajectory':traj})); (out/'manifest.json.tmp').replace(out/'manifest.json')
-if __name__=='__main__': main(*sys.argv[1:])
+import json
+import math
+import os
+import signal
+import sys
+import threading
+from datetime import datetime, timezone
+from pathlib import Path
+
+import av
+import cv2
+import numpy as np
+import pycolmap
+
+from .api import atomic_json
+from .geometry import normalize_camera_pose
+
+
+def event(**fields):
+    print('SLAM_EVENT '+json.dumps(fields, allow_nan=False), flush=True)
+
+
+def parent_guard():
+    descriptor = os.environ.get('SLAM_PARENT_FD')
+    if descriptor is None:
+        return
+    def watch():
+        try:
+            while os.read(int(descriptor), 1):
+                pass
+        finally:
+            os.killpg(os.getpgrp(), signal.SIGTERM)
+    threading.Thread(target=watch, daemon=True).start()
+
+
+def select_frames(video_path, directory, settings, metadata):
+    frames = []
+    target = 0.0
+    first = None
+    directory.mkdir()
+    with av.open(str(video_path)) as container:
+        stream = container.streams.video[0]
+        for frame_id, frame in enumerate(container.decode(stream)):
+            if frame.pts is None or frame.time_base is None:
+                raise ValueError('Video frame has no presentation timestamp')
+            timestamp = float(frame.pts*frame.time_base)
+            if first is None:
+                first = timestamp
+            timestamp -= first
+            if timestamp+1e-8 < target:
+                continue
+            gray = frame.to_ndarray(format='gray')
+            rotation = int(round(getattr(frame, 'rotation', 0) or stream.metadata.get('rotate', 0))) % 360
+            if rotation in (90, 180, 270):
+                gray = cv2.rotate(gray, {90:cv2.ROTATE_90_COUNTERCLOCKWISE,
+                                        180:cv2.ROTATE_180,270:cv2.ROTATE_90_CLOCKWISE}[rotation])
+            height, width = gray.shape
+            factor = min(1, settings['maxImageSize']/max(width, height))
+            if factor < 1:
+                gray = cv2.resize(gray, (round(width*factor), round(height*factor)), interpolation=cv2.INTER_AREA)
+            name = f'{len(frames):06d}.jpg'
+            if not cv2.imwrite(str(directory/name), gray):
+                raise OSError('Could not save selected frame')
+            frames.append({'name':name, 'frameId':frame_id, 'timeSec':timestamp})
+            target = (math.floor((timestamp+1e-8)*settings['sampleHz'])+1)/settings['sampleHz']
+            if len(frames)%10 == 0:
+                event(stage='decoding', processed=frame_id+1, total=metadata['frameCount'])
+    if len(frames) < 2:
+        raise ValueError('Video contains too few selected frames')
+    return frames
+
+
+def export_model(model_id, reconstruction, frames, duration):
+    registered = {image.name:image for image in reconstruction.images.values()}
+    samples = []
+    segments = []
+    origin = None
+    active_segment = None
+    gap_start = None
+    max_gap = 0.0
+    for frame in frames:
+        image = registered.get(frame['name'])
+        sample = {'frameId':frame['frameId'], 'timeSec':frame['timeSec'], 'segmentId':None,
+                  'status':'missing', 'position':None, 'orientationXyzw':None}
+        if image is None:
+            if gap_start is None:
+                gap_start = frame['timeSec']
+            active_segment = None
+        else:
+            pose = image.cam_from_world()
+            position, quaternion = normalize_camera_pose(pose.rotation.matrix(), pose.translation)
+            if origin is None:
+                origin = position.copy()
+            if gap_start is not None:
+                max_gap = max(max_gap, frame['timeSec']-gap_start)
+                gap_start = None
+            if active_segment is None:
+                active_segment = {'id':f'{model_id}-{len(segments)}',
+                                  'startTimeSec':frame['timeSec'], 'endTimeSec':frame['timeSec']}
+                segments.append(active_segment)
+            active_segment['endTimeSec'] = frame['timeSec']
+            sample.update(status='estimated', segmentId=active_segment['id'],
+                          position=(position-origin).tolist(), orientationXyzw=quaternion.tolist())
+        samples.append(sample)
+    if gap_start is not None:
+        max_gap = max(max_gap, duration-gap_start)
+    first_image = next(iter(registered.values()))
+    camera = reconstruction.cameras[first_image.camera_id]
+    reprojection_error = reconstruction.compute_mean_reprojection_error()
+    return {'id':str(model_id), 'camera':{'model':camera.model.name, 'width':camera.width,
+            'height':camera.height, 'params':camera.params.tolist()}, 'samples':samples,
+            'segments':segments, 'quality':{'registeredFrames':len(registered),
+            'sampledFrames':len(frames), 'coverage':len(registered)/len(frames),
+            'points3D':reconstruction.num_points3D(),
+            'meanReprojectionErrorPx':float(reprojection_error) if math.isfinite(reprojection_error) else None,
+            'maxGapSec':max_gap}}
+
+
+def reconstruct(run_directory):
+    request = json.loads((run_directory/'request.json').read_text())
+    settings, metadata = request['settings'], request['video']
+    video_path = run_directory.parent.parent/'videos'/request['videoId']/'video.mp4'
+    frames = select_frames(video_path, run_directory/'images', settings, metadata)
+    atomic_json(run_directory/'frames.json', frames)
+    database = run_directory/'database.db'
+    extraction = pycolmap.FeatureExtractionOptions()
+    extraction.num_threads = settings['threads']
+    extraction.max_image_size = settings['maxImageSize']
+    extraction.sift.max_num_features = settings['maxFeatures']
+    event(stage='features', processed=0, total=len(frames))
+    pycolmap.extract_features(database, run_directory/'images', camera_mode=pycolmap.CameraMode.SINGLE,
+        reader_options={'camera_model':'SIMPLE_RADIAL'}, extraction_options=extraction, device=pycolmap.Device.cpu)
+    event(stage='matching', processed=0, total=len(frames))
+    matching = pycolmap.FeatureMatchingOptions()
+    matching.num_threads = settings['threads']
+    pycolmap.match_sequential(database, matching_options=matching,
+        pairing_options={'overlap':settings['overlap'], 'quadratic_overlap':False, 'num_threads':settings['threads']},
+        device=pycolmap.Device.cpu)
+    event(stage='mapping', processed=0, total=len(frames))
+    mapping = pycolmap.IncrementalPipelineOptions()
+    mapping.num_threads = settings['threads']
+    reconstructions = pycolmap.incremental_mapping(database, run_directory/'images', run_directory/'sparse', options=mapping)
+    models = [export_model(key, value, frames, metadata['durationSec']) for key, value in reconstructions.items()
+              if value.num_reg_images() >= 2]
+    if not models:
+        event(error={'code':'no_reconstruction', 'message':'Не удалось восстановить геометрию. Попробуйте более резкое и текстурированное видео.'})
+        return 2
+    models.sort(key=lambda model:(-model['quality']['registeredFrames'],
+                                 model['quality']['meanReprojectionErrorPx'] or float('inf')))
+    primary = models[0]
+    state = 'succeeded' if primary['quality']['registeredFrames'] == len(frames) else 'partial'
+    warnings = ['Координаты имеют произвольный масштаб; горизонт и север не определены.']
+    if state == 'partial':
+        warnings.append('Часть выбранных кадров не имеет позы в основной модели. Пропуски не интерполируются.')
+    if len(models) > 1:
+        warnings.append('Модели имеют независимые координаты и могут содержать одни и те же кадры.')
+    trajectory = {'schemaVersion':1, 'runId':request['runId'], 'videoId':request['videoId'],
+        'video':metadata, 'createdAt':datetime.now(timezone.utc).isoformat(),
+        'engine':f'pycolmap {pycolmap.__version__}', 'units':'arbitrary', 'scaleSource':None,
+        'poseConvention':'camera-to-world', 'settings':settings, 'primaryModelId':primary['id'],
+        'models':models, 'warnings':warnings}
+    atomic_json(run_directory/'trajectory.json', trajectory)
+    atomic_json(run_directory/'manifest.json', {'state':state, 'trajectory':trajectory})
+    event(stage='done', processed=len(frames), total=len(frames))
+    return 0
+
+
+if __name__ == '__main__':
+    parent_guard()
+    try:
+        raise SystemExit(reconstruct(Path(sys.argv[1])))
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        event(error={'code':'processing_failed', 'message':'Ошибка обработки. Подробности доступны в worker.log.'})
+        raise SystemExit(1)
