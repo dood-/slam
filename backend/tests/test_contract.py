@@ -17,8 +17,11 @@ def make_app(tmp_path, processor=None, limit=512*1024*1024):
 
 def test_upload_range_and_validation(tmp_path):
     app=make_app(tmp_path); c=TestClient(app)
-    r=c.post('/api/videos',files={'file':('clip.mp4',video_bytes(),'video/mp4')}); assert r.status_code==200
+    payload=video_bytes()
+    r=c.post('/api/videos',files={'file':('clip.mp4',payload,'video/mp4')}); assert r.status_code==200
+    assert r.json()['sizeBytes']==len(payload)
     vid=r.json()['id']; full=c.get(f'/api/videos/{vid}/preview'); assert full.status_code==200
+    assert c.get(f'/api/videos/{vid}').json()['sizeBytes']==len(payload)
     part=c.get(f'/api/videos/{vid}/preview',headers={'Range':'bytes=2-7'}); assert part.status_code==206 and len(part.content)==6
     suffix=c.get(f'/api/videos/{vid}/preview',headers={'Range':'bytes=-4'}); assert suffix.status_code==206 and len(suffix.content)==4
     assert c.get(f'/api/videos/{vid}/preview',headers={'Range':'bytes=999999-'}).status_code==416

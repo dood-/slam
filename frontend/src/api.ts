@@ -1,5 +1,5 @@
 export type State='idle'|'running'|'succeeded'|'partial'|'failed'|'cancelled';
-export interface Video {id:string;name:string;width:number;height:number;durationSec:number;frameCount:number;codec:string;sha256:string;previewUrl:string}
+export interface Video {id:string;name:string;width:number;height:number;durationSec:number;frameCount:number;codec:string;sha256:string;sizeBytes?:number;previewUrl:string}
 export interface Status {state:State;runId:string|null;videoId:string|null;stage:string;processed?:number;total?:number;error?:{code:string;message:string}|null}
 export interface Sample {frameId:number;timeSec:number;segmentId:string|null;status:'estimated'|'missing';position:[number,number,number]|null;orientationXyzw:[number,number,number,number]|null}
 export interface Model {id:string;camera:{model:string;width:number;height:number;params:number[]};samples:Sample[];segments:{id:string;startTimeSec:number;endTimeSec:number}[];quality:{registeredFrames:number;sampledFrames:number;coverage:number;points3D:number;meanReprojectionErrorPx:number|null;maxGapSec:number}}
