@@ -66,6 +66,7 @@ class RunRequest(BaseModel): videoId:str; settings:Settings=Field(default_factor
 def run_worker(rid, vid, settings):
     global process
     d=RUNS/rid; d.mkdir(parents=True,exist_ok=True)
+    settings = dict(settings); settings['_videoId'] = vid; settings['_previewUrl'] = f'/api/videos/{vid}/preview'
     cmd=[sys.executable,'-m','slam.worker',str(VIDEOS/vid/'video.mp4'),str(d),json.dumps(settings)]
     process=subprocess.Popen(cmd,start_new_session=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
     out,_=process.communicate(); (d/'worker.log').write_text(out or '')
