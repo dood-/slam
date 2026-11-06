@@ -1,0 +1,17 @@
+.codex
+.aws
+.agents
+.playwright-mcp
+
+
+# Runtime and local inputs
+*.mp4
+storage/
+.venv/
+__pycache__/
+.pytest_cache/
+node_modules/
+dist/
+.taste-skill/
+test-results/
+playwright-report/
