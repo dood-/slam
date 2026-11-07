@@ -14,3 +14,13 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["slam"]
 
+[dependency-groups]
+dev = [
+    "basedpyright>=1.40.2",
+    "ruff>=0.17.4",
+]
+
+
+[tool.basedpyright]
+venvPath = "."
+venv = ".venv"

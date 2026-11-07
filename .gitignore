@@ -1,21 +1,40 @@
-.codex
-.aws
-.agents
-.playwright-mcp
+# Local agent configuration and browser sessions
+/.codex/
+/.aws/
+/.agents/
+/.playwright-mcp/
+/.serena/
+.taste-skill/
 
+# Local environment variables (keep templates tracked)
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Python environments, bytecode, and tooling caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.basedpyright/
+.coverage
+.coverage.*
+htmlcov/
+
+# Frontend dependencies and build output
+node_modules/
+dist/
+*.tsbuildinfo
 
 # Runtime and local inputs
 *.mp4
-storage/
-.venv/
-__pycache__/
-.pytest_cache/
-node_modules/
-dist/
-.taste-skill/
+/storage/
+
+# Browser test artifacts
 test-results/
 playwright-report/
-
-.serena/
-*.tsbuildinfo
-tests/e2e/.runtime/
+/tests/e2e/.runtime/
