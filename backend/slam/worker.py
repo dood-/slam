@@ -4,20 +4,16 @@ from __future__ import annotations
 
 import json
 import math
-import os
-import signal
 import sys
-import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypedDict
 
 import av
 import cv2
-import numpy as np
 import pycolmap
 
-from .api import atomic_json
+from .runtime import atomic_json, event, parent_guard
 from .geometry import normalize_camera_pose
 
 
@@ -36,25 +32,6 @@ class ExportedModel(TypedDict):
     samples: list[dict[str, object]]
     segments: list[dict[str, str | float]]
     quality: ModelQuality
-
-
-def event(**fields):
-    print("SLAM_EVENT " + json.dumps(fields, allow_nan=False), flush=True)
-
-
-def parent_guard():
-    descriptor = os.environ.get("SLAM_PARENT_FD")
-    if descriptor is None:
-        return
-
-    def watch():
-        try:
-            while os.read(int(descriptor), 1):
-                pass
-        finally:
-            os.killpg(os.getpgrp(), signal.SIGTERM)
-
-    threading.Thread(target=watch, daemon=True).start()
 
 
 def select_frames(video_path: Path, directory: Path, settings, metadata):

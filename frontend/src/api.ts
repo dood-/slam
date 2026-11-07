@@ -1,5 +1,12 @@
 export type State =
     "idle" | "running" | "succeeded" | "partial" | "failed" | "cancelled";
+export type EngineId = "colmap" | "cuvslam";
+export interface EngineOption {
+    id: EngineId;
+    label: string;
+    available: boolean;
+    reason: string | null;
+}
 export interface Video {
     id: string;
     name: string;
@@ -17,6 +24,7 @@ export interface Status {
     runId: string | null;
     videoId: string | null;
     stage: string;
+    engine?: EngineId;
     processed?: number;
     total?: number;
     error?: { code: string; message: string } | null;
@@ -73,11 +81,12 @@ export const api = {
         return req<Video>("/videos", { method: "POST", body: f });
     },
     status: () => req<Status>("/status"),
-    start: (videoId: string, settings: Record<string, number>) =>
+    engines: () => req<EngineOption[]>("/engines"),
+    start: (videoId: string, settings: Record<string, number>, engine: EngineId = "colmap") =>
         req<Status>("/runs", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ videoId, settings }),
+            body: JSON.stringify({ videoId, engine, settings }),
         }),
     cancel: (id: string) =>
         req<Status>(`/runs/${id}/cancel`, { method: "POST" }),
@@ -87,6 +96,7 @@ export const api = {
                 runId: string;
                 videoId: string;
                 videoName: string;
+                engine?: string;
                 createdAt: string;
                 state: "succeeded" | "partial";
                 registeredFrames: number;

@@ -11,11 +11,11 @@ import re
 import shutil
 import signal
 import subprocess
-import sys
 import threading
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 import av
 from fastapi import FastAPI, File, Request, UploadFile
@@ -23,6 +23,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
+
+from .engines import engine_options, worker_command
+from .runtime import atomic_json
 
 
 class Settings(BaseModel):
@@ -32,11 +35,13 @@ class Settings(BaseModel):
     maxFeatures: int = Field(default=1500, ge=256, le=8192)
     threads: int = Field(default=2, ge=1, le=16)
     overlap: int = Field(default=5, ge=1, le=30)
+    focalRatio: float = Field(default=0.8, ge=0.1, le=5, allow_inf_nan=False)
 
 
 class RunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     videoId: str = Field(pattern=r"^[a-f0-9]{32}$")
+    engine: Literal["colmap", "cuvslam"] = "colmap"
     settings: Settings = Field(default_factory=Settings)
 
 
@@ -44,12 +49,6 @@ def error(code, message, status=400):
     return JSONResponse(
         {"error": {"code": code, "message": message}}, status_code=status
     )
-
-
-def atomic_json(path, value):
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(value, allow_nan=False), encoding="utf-8")
-    temporary.replace(path)
 
 
 def valid_id(value):
@@ -170,16 +169,24 @@ class RunController:
                 metadata = self.metadata(request.videoId)
             except (OSError, ValueError):
                 return error("not_found", "Видео не найдено.", 404)
+            option = next(option for option in engine_options() if option["id"] == request.engine)
+            if not self.command and not option["available"]:
+                return error("engine_unavailable", option["reason"], 503)
             run_id = uuid.uuid4().hex
             directory = self.runs / run_id
             directory.mkdir()
             settings = request.settings.model_dump()
+            if request.engine == "colmap":
+                settings.pop("focalRatio")
+            else:
+                settings = {key: settings[key] for key in ("maxImageSize", "focalRatio")}
             atomic_json(
                 directory / "request.json",
                 {
                     "runId": run_id,
                     "videoId": request.videoId,
                     "video": metadata,
+                    "engine": request.engine,
                     "settings": settings,
                 },
             )
@@ -189,14 +196,17 @@ class RunController:
                 SLAM_PARENT_FD=str(read_fd),
                 SLAM_RUN_ID=run_id,
                 SLAM_VIDEO_ID=request.videoId,
-                OPENBLAS_NUM_THREADS=str(settings["threads"]),
+                OPENBLAS_NUM_THREADS=str(settings.get("threads", 2)),
             )
+            environment["PYTHONPATH"] = os.pathsep.join(filter(None, [
+                str(Path(__file__).resolve().parents[1]), environment.get("PYTHONPATH")
+            ]))
             video_path = self.videos / request.videoId / "video.mp4"
             try:
                 command = (
                     self.command(video_path, directory, settings, metadata)
                     if self.command
-                    else [sys.executable, "-m", "slam.worker", str(directory)]
+                    else worker_command(request.engine, directory)
                 )
                 self.process = subprocess.Popen(
                     command,
@@ -223,6 +233,7 @@ class RunController:
                 "runId": run_id,
                 "videoId": request.videoId,
                 "stage": "decoding",
+                "engine": request.engine,
                 "processed": 0,
                 "total": metadata["frameCount"],
                 "error": None,
@@ -362,6 +373,10 @@ def create_app(storage=None, processor_command=None, upload_limit_bytes=None):
     def health():
         return {"status": "ok"}
 
+    @app.get("/api/engines")
+    def engines():
+        return engine_options()
+
     @app.get("/api/status")
     def status():
         return controller.status()
@@ -447,6 +462,7 @@ def create_app(storage=None, processor_command=None, upload_limit_bytes=None):
                         "runId": trajectory["runId"],
                         "videoId": trajectory["videoId"],
                         "videoName": trajectory["video"]["name"],
+                        "engine": trajectory.get("engine", "pycolmap"),
                         "createdAt": trajectory["createdAt"],
                         "state": manifest["state"],
                         "registeredFrames": primary["quality"]["registeredFrames"],

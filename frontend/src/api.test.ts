@@ -25,6 +25,7 @@ describe("public API seam", () => {
         expect(fetchMock.mock.calls[0][0]).toBe("/api/runs");
         expect(JSON.parse(String(init?.body))).toEqual({
             videoId: "v-1",
+            engine: "colmap",
             settings: {
                 sampleHz: 5,
                 maxImageSize: 640,

@@ -8,7 +8,7 @@ import {
   ref,
   watch,
 } from "vue";
-import { api, type Status, type Video, type Trajectory } from "./api";
+import { api, type Status, type Video, type Trajectory, type EngineId, type EngineOption } from "./api";
 import { poseAt } from "./trajectory";
 import UiIcon from "./components/UiIcon.vue";
 import Route2D from "./components/Route2D.vue";
@@ -51,7 +51,24 @@ const parameterFields = [
     max: 30,
     step: 1,
   },
+  { key: "focalRatio", label: "Фокус / ширина", unit: "", min: 0.1, max: 5, step: 0.05 },
 ] as const;
+const engine = ref<EngineId>("colmap");
+const engines = ref<EngineOption[]>([
+  { id: "colmap", label: "COLMAP · CPU", available: true, reason: null },
+  { id: "cuvslam", label: "cuVSLAM Mono · GPU", available: false, reason: "Проверка доступности…" },
+]);
+const selectedEngine = computed(() => engines.value.find(option => option.id === engine.value));
+const visibleParameterFields = computed(() => parameterFields.filter(field =>
+  engine.value === "cuvslam"
+    ? ["maxImageSize", "focalRatio"].includes(field.key)
+    : field.key !== "focalRatio",
+));
+function engineLabel(value: string | undefined) {
+  if (value?.toLowerCase().startsWith("cuvslam")) return "cuVSLAM · GPU";
+  if (!value || value === "colmap" || value.toLowerCase().startsWith("pycolmap")) return "COLMAP · CPU";
+  return value;
+}
 const selectedFile = ref<File | null>(null),
   localUrl = ref(""),
   video = ref<Video | null>(null);
@@ -71,13 +88,15 @@ const media = ref<HTMLVideoElement | null>(null),
   time = ref(0),
   speed = ref(1),
   playing = ref(false);
-const settings = ref({
+const colmapSettings = ref<Record<string, number>>({
   sampleHz: 5,
   maxImageSize: 640,
   maxFeatures: 1500,
   threads: 2,
   overlap: 5,
 });
+const cuvslamSettings = ref<Record<string, number>>({ maxImageSize: 960, focalRatio: 0.8 });
+const settings = computed(() => engine.value === "cuvslam" ? cuvslamSettings.value : colmapSettings.value);
 const source = computed(
   () =>
     trajectory.value?.video.previewUrl ||
@@ -108,6 +127,8 @@ const stageLabels: Record<string, string> = {
   features: "Поиск ключевых точек",
   matching: "Сопоставление кадров",
   mapping: "Восстановление геометрии",
+  tracking: "Отслеживание камеры",
+  exporting: "Сохранение траектории",
   done: "Результат готов",
 };
 const poseLabel = computed(() =>
@@ -218,7 +239,7 @@ async function start() {
     if (!video.value) return;
     trajectory.value = null;
     media.value?.pause();
-    status.value = await api.start(video.value.id, settings.value);
+    status.value = await api.start(video.value.id, settings.value, engine.value);
     if (poll) clearTimeout(poll);
     await refresh();
   });
@@ -286,6 +307,7 @@ watch(source, () => {
   playing.value = false;
 });
 onMounted(async () => {
+  await perform(async () => { engines.value = await api.engines(); });
   await perform(loadHistory);
   await refresh();
 });
@@ -323,7 +345,8 @@ function number(value: number | undefined) {
           рабочая область</span
         >
         <span class="flex items-center gap-2"
-          ><UiIcon name="cpu" :size="15" />CPU</span
+          ><UiIcon name="cpu" :size="15" /><span class="hidden sm:inline">{{ status.state === 'running' ? 'Обработка:' : 'Новый запуск:' }}</span>
+          {{ engineLabel(status.state === 'running' ? status.engine : engine) }}</span
         >
       </div>
     </header>
@@ -401,6 +424,29 @@ function number(value: number | undefined) {
             </p>
           </div>
 
+          <div>
+            <label for="engine" class="mb-1.5 block text-sm font-medium">Движок обработки</label>
+            <select
+              id="engine"
+              v-model="engine"
+              class="field"
+              :disabled="pending || status.state === 'running'"
+              aria-describedby="engine-description"
+            >
+              <option v-for="option in engines" :key="option.id" :value="option.id" :disabled="!option.available">
+                {{ option.label }}{{ option.available ? '' : ' · недоступен' }}
+              </option>
+            </select>
+            <p id="engine-description" class="mt-2 text-[13px] leading-5 text-muted">
+              {{ engine === 'cuvslam'
+                ? 'Все кадры видео на NVIDIA GPU. Масштаб условный; параметры камеры приближённые.'
+                : 'Офлайн-реконструкция на CPU с оценкой параметров камеры.' }}
+            </p>
+            <p v-if="engines.find(option => option.id === 'cuvslam')?.reason" class="mt-2 text-[13px] leading-5 text-muted">
+              {{ engines.find(option => option.id === 'cuvslam')?.reason }}
+            </p>
+          </div>
+
           <details
             class="group lg:border-t lg:border-line lg:pt-5"
             :open="parametersOpen"
@@ -422,7 +468,7 @@ function number(value: number | undefined) {
             </summary>
             <div class="mt-5 grid grid-cols-2 gap-4 lg:grid-cols-1">
               <label
-                v-for="field in parameterFields"
+                v-for="field in visibleParameterFields"
                 :key="field.key"
                 class="block min-w-0"
               >
@@ -441,10 +487,13 @@ function number(value: number | undefined) {
                   :max="field.max"
                   :step="field.step"
                   required
-                  :disabled="status.state === 'running'"
+                  :disabled="pending || status.state === 'running'"
                 />
               </label>
             </div>
+            <p v-if="engine === 'cuvslam'" class="mt-3 text-[13px] leading-5 text-muted">
+              Фокус / ширина — предположение о камере, не измеренная калибровка. Начальное значение 0,8.
+            </p>
           </details>
           <div class="space-y-2 lg:space-y-3">
             <button
@@ -453,7 +502,8 @@ function number(value: number | undefined) {
               :disabled="
                 (!selectedFile && !video) ||
                 pending ||
-                status.state === 'running'
+                status.state === 'running' ||
+                !selectedEngine?.available
               "
             >
               <UiIcon name="route" :size="16" />{{
@@ -490,6 +540,9 @@ function number(value: number | undefined) {
             </h1>
             <p class="mt-1 text-sm text-muted">
               Движение камеры, кадр за кадром.
+            </p>
+            <p v-if="trajectory" class="mt-1 text-[13px] text-muted" data-testid="result-engine">
+              Движок результата: {{ engineLabel(trajectory.engine) }}
             </p>
           </div>
           <span
@@ -919,7 +972,7 @@ function number(value: number | undefined) {
                   }}</strong
                   ><small class="mt-1 block text-[13px] text-muted">{{
                     new Date(item.createdAt).toLocaleString("ru-RU")
-                  }}</small></span
+                  }} · {{ engineLabel(item.engine) }}</small></span
                 ><span class="flex items-center gap-4"
                   ><span class="text-right text-[13px]"
                     ><span class="block">{{
