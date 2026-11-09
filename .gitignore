@@ -38,3 +38,9 @@ dist/
 test-results/
 playwright-report/
 /tests/e2e/.runtime/
+
+# Local research and planning artifacts
+/.scratch/
+/research*.md
+/docs/*research*.md
+/docs/research-assets/

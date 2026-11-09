@@ -78,4 +78,4 @@ npm test
 
 На Linux браузеру также нужны системные зависимости Playwright. Если установлен рабочий Chromium, можно указать его: `PLAYWRIGHT_CHROMIUM_EXECUTABLE=/usr/bin/chromium-browser npm test`.
 
-[Спецификация](.scratch/video-trajectory/spec.md) · [Контракт API](docs/api-contract.md) · [Проверки и ограничения](docs/verification.md) · [Исследование](research-reviewed.md).
+[Контракт API](docs/api-contract.md) · [Проверки и ограничения](docs/verification.md).
